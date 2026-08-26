@@ -8,7 +8,8 @@ from zoneinfo import ZoneInfo
 from telegram import Update
 from telegram.ext import (
     ApplicationBuilder,
-    CommandHandler,
+    MessageHandler,
+    filters,
     ContextTypes
 )
 
@@ -28,9 +29,8 @@ def run_dummy_server():
 # Configuration & Constants
 # ---------------------------------------------------------
 BOT_TOKEN = "8008124642:AAEzqg4R_eWfSnjz6R-0ShjNznw44ZLnkWA"
-BD_TZ = ZoneInfo("Asia/Dhaka")  # Bangladesh Time Zone
+BD_TZ = ZoneInfo("Asia/Dhaka")
 
-# US Shift Timing in BD Time
 OFFICIAL_START = time(21, 45) # 9:45 PM BD Time
 GRACE_END = time(21, 50)     # 9:50 PM BD Time
 
@@ -73,7 +73,26 @@ def init_db():
     conn.close()
 
 # ---------------------------------------------------------
-# Command Handlers
+# Text Router Handler (No Slash Needed)
+# ---------------------------------------------------------
+async def handle_text_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message or not update.message.text:
+        return
+    
+    # Text normalization: strip extra spaces, remove '/' if included, convert to lowercase
+    raw_text = update.message.text.strip().lower().lstrip('/')
+
+    if raw_text in ['in', 'start work', 'start_work']:
+        await start_work(update, context)
+    elif raw_text in ['out', 'off work', 'off_work']:
+        await off_work(update, context)
+    elif raw_text in ['eat', 'toilet', 'smoke']:
+        await start_break(update, context, raw_text)
+    elif raw_text in ['back', 'back to seat']:
+        await back_to_seat(update, context)
+
+# ---------------------------------------------------------
+# Logic Functions
 # ---------------------------------------------------------
 async def start_work(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
@@ -92,15 +111,11 @@ async def start_work(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     late_minutes = 0
-    # Check late based on 9:45 PM US Shift
     official_datetime = datetime.combine(now.date(), OFFICIAL_START, tzinfo=BD_TZ)
     
-    # If starting work late at night (after 9:50 PM) or after midnight (before 9:00 AM)
     if now_time > GRACE_END or now_time < time(9, 0):
         if now_time < time(9, 0):
-            # If after midnight, official start was yesterday 9:45 PM
             official_datetime = datetime.combine(now.date(), OFFICIAL_START, tzinfo=BD_TZ)
-        
         if now > official_datetime:
             late_minutes = int((now - official_datetime).total_seconds() // 60)
 
@@ -125,16 +140,12 @@ async def start_work(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(msg, parse_mode='Markdown')
 
-async def start_break(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def start_break(update: Update, context: ContextTypes.DEFAULT_TYPE, break_type: str):
     user = update.effective_user
-    command = update.message.text.split()[0].replace('/', '').lower()
     now = datetime.now(BD_TZ)
     today_str = now.strftime("%Y-%m-%d")
 
-    if command not in BREAK_LIMITS:
-        return
-
-    break_info = BREAK_LIMITS[command]
+    break_info = BREAK_LIMITS[break_type]
     break_name = break_info['name']
     max_count = break_info['max_count']
 
@@ -144,16 +155,16 @@ async def start_break(update: Update, context: ContextTypes.DEFAULT_TYPE):
     session = cursor.fetchone()
 
     if not session:
-        await update.message.reply_text("❌ আগে `/start_work` বা `/in` দিয়ে শিফট শুরু করো!", parse_mode='Markdown')
+        await update.message.reply_text("❌ আগে `in` বা `start work` লিখে শিফট শুরু করো!", parse_mode='Markdown')
         conn.close()
         return
 
     if session[0] == 'ON_BREAK':
-        await update.message.reply_text(f"⚠️ তুমি বর্তমানে **{session[1]}** এ আছ। সিটে ফিরতে `/back` চাপো।", parse_mode='Markdown')
+        await update.message.reply_text(f"⚠️ তুমি বর্তমানে **{session[1]}** এ আছ। সিটে ফিরতে `back` টাইপ করো।", parse_mode='Markdown')
         conn.close()
         return
 
-    column_name = f"{command}_count"
+    column_name = f"{break_type}_count"
     cursor.execute(f"SELECT {column_name} FROM break_usage WHERE user_id = ? AND date = ?", (user.id, today_str))
     usage_res = cursor.fetchone()
     current_usage = usage_res[0] if usage_res else 0
@@ -236,18 +247,13 @@ async def off_work(update: Update, context: ContextTypes.DEFAULT_TYPE):
 if __name__ == '__main__':
     init_db()
 
-    # Start dummy HTTP server in background thread for Render
     server_thread = Thread(target=run_dummy_server, daemon=True)
     server_thread.start()
 
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
-    app.add_handler(CommandHandler(["start_work", "in"], start_work))
-    app.add_handler(CommandHandler("eat", start_break))
-    app.add_handler(CommandHandler("toilet", start_break))
-    app.add_handler(CommandHandler("smoke", start_break))
-    app.add_handler(CommandHandler("back", back_to_seat))
-    app.add_handler(CommandHandler(["off_work", "out"], off_work))
+    # Listen to all text messages (with or without /)
+    app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND | filters.COMMAND), handle_text_messages))
 
-    print("Bot is 24/7 active with US Shift Late calculation...")
+    print("Bot is 24/7 active without slash requirements...")
     app.run_polling()
