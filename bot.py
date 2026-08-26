@@ -1,10 +1,11 @@
+import os
 import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes
 from datetime import datetime
 
-# আপনার আসল টেলিগ্রাম বট টোকেনটি কোটেট স্ট্রিং-এর ভেতর বসান
-BOT_TOKEN = "8874903543:AAFrPxIV5Rerqsv_nGN-ce_ZKdPbWsh7UDE"
+# Render-এর Environment Variable থেকে টোকেন নেবে (নিরাপদ উপায়)
+BOT_TOKEN = os.getenv("BOT_TOKEN")
 
 user_timers = {}
 
@@ -44,7 +45,7 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         reply_markup = get_main_keyboard(user_id)
         await query.edit_message_text(
-            text=f"🚬 **{user_name}** ব্রেকে গেছেন!\n⏰ **শুরূর সময়:** {start_time_str}\n\nফিরে এসে নিচের বাটনে চাপ দিন:",
+            text=f"🚬 **{user_name}** ব্রেকে গেছেন!\n⏰ **শুরুর সময়:** {start_time_str}\n\nফিরে এসে নিচের বাটনে চাপ দিন:",
             reply_markup=reply_markup,
             parse_mode="Markdown"
         )
@@ -73,9 +74,10 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
 
 if __name__ == '__main__':
-    app = ApplicationBuilder().token(BOT_TOKEN).build()
-    
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CallbackQueryHandler(button_click))
-    
-    app.run_polling()
+    if not BOT_TOKEN:
+        print("Error: BOT_TOKEN Environment Variable সেট করা হয়নি!")
+    else:
+        app = ApplicationBuilder().token(BOT_TOKEN).build()
+        app.add_handler(CommandHandler("start", start))
+        app.add_handler(CallbackQueryHandler(button_click))
+        app.run_polling()
