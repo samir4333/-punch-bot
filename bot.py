@@ -5,12 +5,12 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes
 from datetime import datetime
 
-BOT_TOKEN = os.getenv("BOT_TOKEN")
+# Render-এর Environment থেকে টোকেন নেবে, না পেলে আপনার দেওয়া টোকেনটি ডিফল্ট হিসেবে কাজ করবে
+BOT_TOKEN = os.getenv("BOT_TOKEN", "8008124642:AAEzqg4R_eWfSnjz6R-0ShjNznw44ZLnkWA")
 DATA_FILE = "timers.json"
 
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
-# ডাটা ফাইল থেকে লোড করার ফাংশন
 def load_timers():
     if os.path.exists(DATA_FILE):
         try:
@@ -20,10 +20,12 @@ def load_timers():
             return {}
     return {}
 
-# ডাটা ফাইলে সেভ করার ফাংশন
 def save_timers(data):
-    with open(DATA_FILE, "w") as f:
-        json.dump(data, f)
+    try:
+        with open(DATA_FILE, "w") as f:
+            json.dump(data, f)
+    except Exception as e:
+        logging.error(f"Save Error: {e}")
 
 user_timers = load_timers()
 
@@ -95,10 +97,7 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
 
 if __name__ == '__main__':
-    if not BOT_TOKEN:
-        print("Error: BOT_TOKEN সেট করা নেই!")
-    else:
-        app = ApplicationBuilder().token(BOT_TOKEN).build()
-        app.add_handler(CommandHandler("start", start))
-        app.add_handler(CallbackQueryHandler(button_click))
-        app.run_polling()
+    app = ApplicationBuilder().token(BOT_TOKEN).build()
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CallbackQueryHandler(button_click))
+    app.run_polling()
