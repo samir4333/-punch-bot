@@ -3,28 +3,24 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes
 from datetime import datetime
 
-BOT_TOKEN = "YOUR_BOT_TOKEN_HERE"  # আপনার বটের টোকেন বসান
+# আপনার আসল টেলিগ্রাম বট টোকেনটি কোটেট স্ট্রিং-এর ভেতর বসান
+BOT_TOKEN = "8874903543:AAFrPxIV5Rerqsv_nGN-ce_ZKdPbWsh7UDE"
 
-# স্মোকিং টাইমার ট্র্যাকিং ডিকশনারি
 user_timers = {}
 
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
-# বাটন লেআউট তৈরির ফাংশন
 def get_main_keyboard(user_id):
     if user_id in user_timers:
-        # ইউজার যদি অলরেডি বাইরে থাকে, তবে 'Back' বাটন দেখাবে
         keyboard = [
             [InlineKeyboardButton("🔙 Back (ফিরে এসেছি)", callback_data="back")]
         ]
     else:
-        # ইউজার যদি ভেতরে থাকে, তবে 'Punch / Smoke' বাটন দেখাবে
         keyboard = [
             [InlineKeyboardButton("🚬 Punch / Break (বাইরে যাচ্ছি)", callback_data="punch")]
         ]
     return InlineKeyboardMarkup(keyboard)
 
-# /start দিলে প্রথম বাটন শো করবে
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     reply_markup = get_main_keyboard(user_id)
@@ -34,7 +30,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode="Markdown"
     )
 
-# বাটনে ক্লিক করলে যা ঘটবে
 async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -44,7 +39,6 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
     now = datetime.now()
 
     if query.data == "punch":
-        # সময় সেভ রাখা
         user_timers[user_id] = now
         start_time_str = now.strftime("%I:%M %p")
         
