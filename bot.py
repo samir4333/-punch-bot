@@ -1,5 +1,8 @@
+import os
 import logging
 import sqlite3
+from threading import Thread
+from http.server import HTTPServer, BaseHTTPRequestHandler
 from datetime import datetime, time
 from telegram import Update
 from telegram.ext import (
@@ -9,10 +12,22 @@ from telegram.ext import (
     TypeHandler
 )
 
+# Render Web Service Support (Keep-Alive Dummy Server)
+class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"Bot is active and running!")
+
+def run_dummy_server():
+    port = int(os.environ.get("PORT", 8080))
+    server = HTTPServer(('0.0.0.0', port), SimpleHTTPRequestHandler)
+    server.serve_forever()
+
 # ---------------------------------------------------------
 # Configuration & Constants
 # ---------------------------------------------------------
-BOT_TOKEN = "8008124642:AAEzqg4R_eWfSnjz6R-0ShjNznw44ZLnkWA"  # Your API Token
+BOT_TOKEN = "8008124642:AAEzqg4R_eWfSnjz6R-0ShjNznw44ZLnkWA"
 
 ACTIVE_START = time(9, 0)   # 9:00 AM
 ACTIVE_END = time(21, 0)   # 9:00 PM
@@ -33,8 +48,6 @@ logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s
 def init_db():
     conn = sqlite3.connect('punch_bot.db')
     cursor = conn.cursor()
-    
-    # Active Sessions Table
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS sessions (
             user_id INTEGER PRIMARY KEY,
@@ -46,8 +59,6 @@ def init_db():
             break_start_time TEXT
         )
     ''')
-    
-    # Daily Break Usage Table
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS break_usage (
             user_id INTEGER,
@@ -67,7 +78,6 @@ def init_db():
 async def active_hours_middleware(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message or not update.message.text:
         return
-    
     now_time = datetime.now().time()
     if not (ACTIVE_START <= now_time <= ACTIVE_END):
         await update.message.reply_text("⛔ **Bot Inactive!** বট কেবল সকাল ৯:০০ টা থেকে রাত ৯:০০ টা পর্যন্ত কার্যকর থাকে।", parse_mode='Markdown')
@@ -76,8 +86,6 @@ async def active_hours_middleware(update: Update, context: ContextTypes.DEFAULT_
 # ---------------------------------------------------------
 # Command Handlers
 # ---------------------------------------------------------
-
-# 🟢 Start Work (/start_work বা /in)
 async def start_work(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     now = datetime.now()
@@ -86,7 +94,6 @@ async def start_work(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     conn = sqlite3.connect('punch_bot.db')
     cursor = conn.cursor()
-
     cursor.execute("SELECT status FROM sessions WHERE user_id = ?", (user.id,))
     session = cursor.fetchone()
 
@@ -95,7 +102,6 @@ async def start_work(update: Update, context: ContextTypes.DEFAULT_TYPE):
         conn.close()
         return
 
-    # Late Calculation Logic
     late_minutes = 0
     if now_time > GRACE_END:
         official_datetime = datetime.combine(now.date(), OFFICIAL_START)
@@ -122,8 +128,6 @@ async def start_work(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(msg, parse_mode='Markdown')
 
-
-# 🍚 /eat, 🚽 /toilet, 🚬 /smoke
 async def start_break(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     command = update.message.text.split()[0].replace('/', '').lower()
@@ -139,7 +143,6 @@ async def start_break(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     conn = sqlite3.connect('punch_bot.db')
     cursor = conn.cursor()
-
     cursor.execute("SELECT status, current_break FROM sessions WHERE user_id = ?", (user.id,))
     session = cursor.fetchone()
 
@@ -153,7 +156,6 @@ async def start_break(update: Update, context: ContextTypes.DEFAULT_TYPE):
         conn.close()
         return
 
-    # Check daily usage count
     column_name = f"{command}_count"
     cursor.execute(f"SELECT {column_name} FROM break_usage WHERE user_id = ? AND date = ?", (user.id, today_str))
     usage_res = cursor.fetchone()
@@ -164,7 +166,6 @@ async def start_break(update: Update, context: ContextTypes.DEFAULT_TYPE):
         conn.close()
         return
 
-    # Update state to ON_BREAK
     new_count = current_usage + 1
     cursor.execute(f"UPDATE break_usage SET {column_name} = ? WHERE user_id = ? AND date = ?", (new_count, user.id, today_str))
     cursor.execute("UPDATE sessions SET status = 'ON_BREAK', current_break = ?, break_start_time = ? WHERE user_id = ?",
@@ -178,15 +179,12 @@ async def start_break(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode='Markdown'
     )
 
-
-# 🪑 Back to Seat (/back)
 async def back_to_seat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     now = datetime.now()
 
     conn = sqlite3.connect('punch_bot.db')
     cursor = conn.cursor()
-
     cursor.execute("SELECT status, current_break, break_start_time FROM sessions WHERE user_id = ?", (user.id,))
     session = cursor.fetchone()
 
@@ -208,15 +206,12 @@ async def back_to_seat(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode='Markdown'
     )
 
-
-# 🔴 Off Work (/off_work বা /out)
 async def off_work(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     now = datetime.now()
 
     conn = sqlite3.connect('punch_bot.db')
     cursor = conn.cursor()
-
     cursor.execute("SELECT start_time, late_minutes FROM sessions WHERE user_id = ?", (user.id,))
     session = cursor.fetchone()
 
@@ -238,18 +233,19 @@ async def off_work(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode='Markdown'
     )
 
-
 # ---------------------------------------------------------
 # App Main Execution
 # ---------------------------------------------------------
 if __name__ == '__main__':
     init_db()
-    app = ApplicationBuilder().token(BOT_TOKEN).build()
 
-    # Active Hours Listener (Global Middleware)
+    # Start dummy HTTP server in background thread for Render
+    server_thread = Thread(target=run_dummy_server, daemon=True)
+    server_thread.start()
+
+    app = ApplicationBuilder().token(BOT_TOKEN).build()
     app.add_handler(TypeHandler(Update, active_hours_middleware), group=-1)
 
-    # Command Handlers Setup
     app.add_handler(CommandHandler(["start_work", "in"], start_work))
     app.add_handler(CommandHandler("eat", start_break))
     app.add_handler(CommandHandler("toilet", start_break))
@@ -257,5 +253,5 @@ if __name__ == '__main__':
     app.add_handler(CommandHandler("back", back_to_seat))
     app.add_handler(CommandHandler(["off_work", "out"], off_work))
 
-    print("Bot is successfully running with configured rules...")
+    print("Bot is successfully running...")
     app.run_polling()
