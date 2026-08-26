@@ -4,12 +4,12 @@ import sqlite3
 from threading import Thread
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from datetime import datetime, time
+from zoneinfo import ZoneInfo
 from telegram import Update
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
-    ContextTypes,
-    TypeHandler
+    ContextTypes
 )
 
 # Render Web Service Support (Keep-Alive Dummy Server)
@@ -17,7 +17,7 @@ class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
-        self.wfile.write(b"Bot is active and running!")
+        self.wfile.write(b"Bot is active and running 24/7!")
 
 def run_dummy_server():
     port = int(os.environ.get("PORT", 8080))
@@ -28,11 +28,11 @@ def run_dummy_server():
 # Configuration & Constants
 # ---------------------------------------------------------
 BOT_TOKEN = "8008124642:AAEzqg4R_eWfSnjz6R-0ShjNznw44ZLnkWA"
+BD_TZ = ZoneInfo("Asia/Dhaka")  # Bangladesh Time Zone
 
-ACTIVE_START = time(9, 0)   # 9:00 AM
-ACTIVE_END = time(21, 0)   # 9:00 PM
-OFFICIAL_START = time(9, 45)  # 9:45 AM
-GRACE_END = time(9, 50)      # 9:50 AM
+# US Shift Timing in BD Time
+OFFICIAL_START = time(21, 45) # 9:45 PM BD Time
+GRACE_END = time(21, 50)     # 9:50 PM BD Time
 
 BREAK_LIMITS = {
     'eat': {'max_count': 2, 'duration_min': 20, 'name': '🍚 Eat'},
@@ -73,22 +73,11 @@ def init_db():
     conn.close()
 
 # ---------------------------------------------------------
-# Middleware: Active Hours Check (9 AM - 9 PM)
-# ---------------------------------------------------------
-async def active_hours_middleware(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not update.message or not update.message.text:
-        return
-    now_time = datetime.now().time()
-    if not (ACTIVE_START <= now_time <= ACTIVE_END):
-        await update.message.reply_text("⛔ **Bot Inactive!** বট কেবল সকাল ৯:০০ টা থেকে রাত ৯:০০ টা পর্যন্ত কার্যকর থাকে।", parse_mode='Markdown')
-        context.drop_child_handlers()
-
-# ---------------------------------------------------------
 # Command Handlers
 # ---------------------------------------------------------
 async def start_work(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
-    now = datetime.now()
+    now = datetime.now(BD_TZ)
     today_str = now.strftime("%Y-%m-%d")
     now_time = now.time()
 
@@ -103,9 +92,17 @@ async def start_work(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     late_minutes = 0
-    if now_time > GRACE_END:
-        official_datetime = datetime.combine(now.date(), OFFICIAL_START)
-        late_minutes = int((now - official_datetime).total_seconds() // 60)
+    # Check late based on 9:45 PM US Shift
+    official_datetime = datetime.combine(now.date(), OFFICIAL_START, tzinfo=BD_TZ)
+    
+    # If starting work late at night (after 9:50 PM) or after midnight (before 9:00 AM)
+    if now_time > GRACE_END or now_time < time(9, 0):
+        if now_time < time(9, 0):
+            # If after midnight, official start was yesterday 9:45 PM
+            official_datetime = datetime.combine(now.date(), OFFICIAL_START, tzinfo=BD_TZ)
+        
+        if now > official_datetime:
+            late_minutes = int((now - official_datetime).total_seconds() // 60)
 
     cursor.execute('''
         INSERT INTO sessions (user_id, user_name, start_time, late_minutes, status)
@@ -131,7 +128,7 @@ async def start_work(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def start_break(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     command = update.message.text.split()[0].replace('/', '').lower()
-    now = datetime.now()
+    now = datetime.now(BD_TZ)
     today_str = now.strftime("%Y-%m-%d")
 
     if command not in BREAK_LIMITS:
@@ -181,7 +178,7 @@ async def start_break(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def back_to_seat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
-    now = datetime.now()
+    now = datetime.now(BD_TZ)
 
     conn = sqlite3.connect('punch_bot.db')
     cursor = conn.cursor()
@@ -194,7 +191,7 @@ async def back_to_seat(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     break_name = session[1]
-    break_start = datetime.strptime(session[2], "%Y-%m-%d %H:%M:%S")
+    break_start = datetime.strptime(session[2], "%Y-%m-%d %H:%M:%S").replace(tzinfo=BD_TZ)
     duration_min = int((now - break_start).total_seconds() // 60)
 
     cursor.execute("UPDATE sessions SET status = 'WORKING', current_break = NULL, break_start_time = NULL WHERE user_id = ?", (user.id,))
@@ -208,7 +205,7 @@ async def back_to_seat(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def off_work(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
-    now = datetime.now()
+    now = datetime.now(BD_TZ)
 
     conn = sqlite3.connect('punch_bot.db')
     cursor = conn.cursor()
@@ -220,7 +217,7 @@ async def off_work(update: Update, context: ContextTypes.DEFAULT_TYPE):
         conn.close()
         return
 
-    start_time = datetime.strptime(session[0], "%Y-%m-%d %H:%M:%S")
+    start_time = datetime.strptime(session[0], "%Y-%m-%d %H:%M:%S").replace(tzinfo=BD_TZ)
     total_hours = round((now - start_time).total_seconds() / 3600, 2)
     late_min = session[1]
 
@@ -244,7 +241,6 @@ if __name__ == '__main__':
     server_thread.start()
 
     app = ApplicationBuilder().token(BOT_TOKEN).build()
-    app.add_handler(TypeHandler(Update, active_hours_middleware), group=-1)
 
     app.add_handler(CommandHandler(["start_work", "in"], start_work))
     app.add_handler(CommandHandler("eat", start_break))
@@ -253,5 +249,5 @@ if __name__ == '__main__':
     app.add_handler(CommandHandler("back", back_to_seat))
     app.add_handler(CommandHandler(["off_work", "out"], off_work))
 
-    print("Bot is successfully running...")
+    print("Bot is 24/7 active with US Shift Late calculation...")
     app.run_polling()
